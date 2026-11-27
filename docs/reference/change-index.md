@@ -468,3 +468,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #898 | 2026-11-25 | ci: T0085 — the capture image builds linux/arm64 again | — | — | T0085 |
 | #899 | 2026-11-26 | fix(scripts): iter-212 — Kraken's count-change notice ruled not a window | iter-212 | — | — |
 | #904 | 2026-11-27 | ci(test-suite): T0231 — the cache restart harness in its own CI step | — | — | T0231 |
+| #905 | 2026-11-27 | fix(engine): iter-213 — the cover WARNING names Kraken's order report | iter-213 | — | — |

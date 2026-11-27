@@ -2168,6 +2168,7 @@ class ProbeExecutor:
                             report.order_status,
                             order_id=str(order.client_order_id),
                             venue_order_id=venue_order_id,
+                            from_report=True,
                         )
                         self._answer(client_order_id, answered)
                         if recancel:
@@ -2182,6 +2183,7 @@ class ProbeExecutor:
                             order.status,
                             order_id=str(order.client_order_id),
                             venue_order_id=venue_order_id or _venue_order_id_of(order),
+                            from_report=False,
                         )
                         continue
                     # A restored row no report answered for takes the tail below as a row outside the restored set does,
@@ -2217,6 +2219,7 @@ class ProbeExecutor:
                         report.order_status,
                         order_id=order_id,
                         venue_order_id=venue_order_id,
+                        from_report=True,
                     )
                     if self._restored_row(row):
                         self._answer(client_order_id, answered)
@@ -2278,7 +2281,13 @@ class ProbeExecutor:
         that completes the row counts `filled` through `_reconcile_adopted_row`'s arm, the startup's rule."""
         label = _row_label(row, venue_order_id)
         answered = self._reconcile_adopted_row(
-            boundary, row, float(report.filled_qty), report.order_status, order_id=order_id, venue_order_id=venue_order_id
+            boundary,
+            row,
+            float(report.filled_qty),
+            report.order_status,
+            order_id=order_id,
+            venue_order_id=venue_order_id,
+            from_report=True,
         )
         try:
             (self._venue_cancel or cancel_venue_order)(venue_order_id, str(report.instrument_id))
@@ -2403,10 +2412,10 @@ class ProbeExecutor:
 
     def _trades_cover(self, boundary: datetime, venue_order_id: str | None, ledgered: float) -> bool | None:
         """Whether the venue's trade history holds fills for `venue_order_id` summing to at least
-        `ledgered`, the withdrawal check's second source (spec 00120 D19): an order's figure falls short of
-        the ledger without a withdrawal when the library created the order from the venue's report with
-        none of its fills applied, a cold start's shape. None -- the check then trips on the order's figure
-        -- for a row with no txid and, for the rest of the pass, once the history's one read
+        `ledgered`, the withdrawal check's second source (spec 00120 D19): an order's figure -- the Cache's
+        copy the library created with none of its fills applied, a cold start's shape, or Kraken's own order
+        report -- can fall short of the ledger without a withdrawal. None -- the check then trips on the
+        order's figure -- for a row with no txid and, for the rest of the pass, once the history's one read
         (`_reset_fills_read`) has failed, since an unread history is no evidence either way."""
         if venue_order_id is None or self._venue_fills_failed:
             return None
@@ -2551,10 +2560,13 @@ class ProbeExecutor:
         *,
         order_id: str | None,
         venue_order_id: str | None,
+        from_report: bool,
     ) -> bool:
         """One ledgered row against the venue truth its order carries: the quantity the venue says
         filled, and the order's status. Returns whether the venue vouches for the row's figure now --
-        the report's, or the ledger's where the trade history covers it (`_answer`).
+        the report's, or the ledger's where the trade history covers it (`_answer`). `from_report` says
+        whether `venue_filled` is Kraken's order report or the Cache's copy, the figure the trade
+        history's cover WARNING names as short.
 
         The comparison takes exactly one of four arms, on a dead-band of `_OVERFILL_TOLERANCE`: the
         ledgered figure is a SUM of per-fill floats and the venue's is one exactly-rounded
@@ -2640,8 +2652,16 @@ class ProbeExecutor:
             # this order credits only what the Cache holds beyond the row.
             self._rows_the_pass_repaired.add(client_order_id)
             logger.warning(
-                "adopted order %s reads %.10g filled on its order figure against the %.10g recorded here, and the venue's "
-                "trade history covers the ledger -- the figure is the library's copy without its fills applied, no withdrawal",
+                (
+                    "adopted order %s reads %.10g filled on its order figure against the %.10g recorded here, and the venue's "
+                    "trade history covers the ledger -- the figure is Kraken's order report as this engine read it, below the "
+                    "trade history it read: compare the order's executed volume with its trades at Kraken, no withdrawal"
+                )
+                if from_report
+                else (
+                    "adopted order %s reads %.10g filled on its order figure against the %.10g recorded here, and the venue's "
+                    "trade history covers the ledger -- the figure is the library's copy without its fills applied, no withdrawal"
+                ),
                 label,
                 venue_filled,
                 ledgered,
@@ -2719,6 +2739,7 @@ class ProbeExecutor:
                             report.order_status,
                             order_id=None if held is None else str(held.client_order_id),
                             venue_order_id=venue_order_id,
+                            from_report=True,
                         )
                     else:
                         answered = self._reconcile_finished_row(
