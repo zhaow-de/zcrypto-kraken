@@ -54,10 +54,8 @@ HANDLE: list = [None]
 STOPPED_CACHE: list = [None]
 
 
-# The venue endpoints each client config takes from the loopback in place of whatever node.py passes: `base_url`, the
-# REST server; the data client's public socket, the data peer, with its private and L3 sockets pointed there too, so
-# none of its sockets keeps a default past the loopback; and the execution client's private socket, the exec peer.
-# Every other field is node.py's own.
+# The venue endpoints each client config takes from the loopback over node.py's, every other field node.py's own;
+# the data client's private and L3 sockets point at the data peer too, so none keeps a default past the loopback.
 _DATA_ENDPOINTS = {
     "base_url": CONFIG["base_url"],
     "ws_public_url": CONFIG["ws_public"],
@@ -86,8 +84,7 @@ _production_node_builder = node_module._node_builder
 
 
 def _node_builder(config: EngineConfig):
-    # The library's 10 s post-stop wait for residual events, at 0: a frame or an answer reaching the node after the
-    # window's stop is dropped without trace, so the driver fails a run in which the venue sent one after `stopped_at`.
+    # The library's residual-event wait at 0; `_Node.run` fails a run in which the venue sent after `stopped_at`.
     return _production_node_builder(config).with_delay_post_stop_secs(0)
 
 

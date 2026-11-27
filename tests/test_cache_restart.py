@@ -715,12 +715,9 @@ def test_an_order_cancelled_while_the_engine_was_down_is_closed_by_the_librarys_
 @pytest.mark.parametrize("with_order_qty", [True, False], ids=["with-order_qty", "without-order_qty"])
 def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one, with_order_qty):
     """The row is the previous process's reducer, which the startup pass keeps, so the order is still
-    open when the `trade` frame (last 0.2, cumulative 0.6) lands. With `order_qty` the library books it
-    twice, 0.8 on a copy that stays open. Without it, the shape of Kraken's live `trade` frames (T0226's
-    resolution), the library rewrites the copy to its filled 0.6, `FILLED`, and rejects the frame's own
-    fill; no cancel goes in that process, and the next start's pass cancels the remainder at Kraken by
-    its txid. Either way both fills credit the row nothing and the re-read pass repairs it to the venue's
-    0.6, its intent left `pending`."""
+    open when the `trade` frame (last 0.2, cumulative 0.6) lands. The name holds for the frame with
+    `order_qty`; without it, the shape of Kraken's live `trade` frames (T0226's resolution), the library
+    rewrites the copy `FILLED` instead, and the case follows that copy to the next start's cancel by txid."""
     valkey, node, wire, _ = phase_one
     node.mark_row_reducer(wire["client_order_id"])
     with _venue() as (venue, data, exec_):
@@ -778,7 +775,7 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
             f"Rejecting fill that would cause overfill for {wire['client_order_id']}: order.quantity=0.60000000, "
             "order.filled_qty=0.60000000, fill.last_qty=0.20000000, would result in filled_qty=0.80000000"
         ) in record["log"]
-    # The executor: both fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
+    # The executor: new fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
     # and the kept reducer's intent stays pending on its open row.
     assert record["restored"] == [wire["client_order_id"]]
     [row] = node.rows()
@@ -1085,13 +1082,11 @@ def _external_copy(record: dict) -> tuple:
 
 
 def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
-    """The owner's ruling: an empty namespace is a cold start, never a refusal. The order filled 0.4
-    before the stop: the library creates the EXTERNAL copy from the venue's report with that fill applied,
-    PARTIALLY_FILLED and no position, and the pass reads the venue's report for it at the ledger's 0.4, so
-    no trip and no trade-history read -- on this pin D19's cover is held by `tests/test_engine_executor.py`'s
-    `test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it`.
-    The restarted node reads zero, reconciliation names the order by its txid under EXTERNAL, the pass
-    cancels it as an order the ledger carries as no reducer, and the cancel's ack infers no second fill."""
+    """An empty namespace is a cold start, never a refusal. The order filled 0.4 before the stop: the
+    library creates the EXTERNAL copy from the venue's report with that fill applied, PARTIALLY_FILLED and
+    no position, and the pass reads the venue's report for it at the ledger's 0.4, so no trip and no
+    trade-history read -- on this pin D19's cover is held by `tests/test_engine_executor.py`'s
+    `test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it`."""
     node, wire, record, cancels, calls = _cold_start(tmp_path)
 
     assert record["errors"] == [], record["errors"]
@@ -1101,8 +1096,6 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     assert _external_copy(record) == (wire["txid"], "EXTERNAL", wire["txid"], "PARTIALLY_FILLED", "0.40000000", True)
     assert record["at_start"]["positions"] == []
     assert "execution kill switch tripped" not in record["log"]
-    # The restored copy is read at the venue (spec 00120 D6), whose report reads the ledger's 0.4, so the
-    # withdrawal check reads no shortfall and the trade history is not consulted.
     assert "reads 0 filled on its order figure" not in record["log"]
     assert _history_read_by_the_pass(calls) == [], calls
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
@@ -1123,8 +1116,7 @@ def test_a_cold_start_whose_lookback_misses_the_fill_trips_nothing_on_the_librar
     the EXTERNAL copy at ACCEPTED with nothing filled, below the ledger's 0.4: the copy spec 00120 D19 was
     ruled on, there with the fill read and not applied. The pass reads the restored copy at the venue (D6),
     whose report reads the ledger's 0.4, so the check never reads the copy's 0: no kill trip and no
-    trade-history read, which a check on the copy's figure would make. The cancel's ack then infers the
-    copy's missing 0.4, which credits the row nothing."""
+    trade-history read, which a check on the copy's figure would make."""
     node, wire, record, cancels, calls = _cold_start(tmp_path, fill_minutes_ago=721)
 
     assert record["errors"] == [], record["errors"]
