@@ -469,3 +469,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #899 | 2026-11-26 | fix(scripts): iter-212 — Kraken's count-change notice ruled not a window | iter-212 | — | — |
 | #904 | 2026-11-27 | ci(test-suite): T0231 — the cache restart harness in its own CI step | — | — | T0231 |
 | #905 | 2026-11-27 | fix(engine): iter-213 — the cover WARNING names Kraken's order report | iter-213 | — | — |
+| #906 | 2026-11-27 | feat(archive): iter-214 — a fleet-dark hour waits for a late trades file | iter-214 | 00167 | — |
